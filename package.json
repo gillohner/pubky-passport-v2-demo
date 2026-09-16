@@ -1,0 +1,39 @@
+{
+  "name": "pubky-passport-v2-demo",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "audit": "npm audit --audit-level=moderate",
+    "dev": "vite",
+    "build": "tsc && vite build --base=./",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "check": "npm run format:check && npm run lint && npm test && npm run build",
+    "format": "prettier \"**/*.{js,ts,json,yml,yaml,md,html}\" --write",
+    "format:check": "prettier \"**/*.{js,ts,json,yml,yaml,md,html}\" --check",
+    "lint": "eslint .",
+    "test:e2e": "playwright test",
+    "dev:https": "vite --host 127.0.0.1 --mode https"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "@types/qrcode": "^1.5.6",
+    "@vitejs/plugin-basic-ssl": "^2.1.0",
+    "eslint": "^10.8.1",
+    "globals": "^17.9.0",
+    "prettier": "^3.9.6",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.67.0",
+    "vite": "^8.2.1",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "@synonymdev/pubky": "^0.11.0",
+    "qrcode": "^1.5.4"
+  }
+}
