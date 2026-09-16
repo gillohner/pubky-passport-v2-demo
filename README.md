@@ -19,9 +19,12 @@ file editing, and the event stream. Account creation adds the client side of
    popup; mobile uses the current tab. **Create in this tab** explicitly tests the
    navigation callback on any device.
 3. Finish verification in Passport. The demo receives the homeserver invite and
-   displays a new **Ring signup QR** and **Open in Ring** link. On mobile it also
+   displays a **signup invite QR** and **Open in Ring** link. On mobile it also
    attempts to open Ring automatically; tap the link if the browser blocks that.
-4. Finish account creation and authorization in Ring, then return to the demo.
+4. On your phone, open **Ring → Add Pubky → Scan signup QR**. Scan the invite QR
+   on your desktop and finish creating your account in Ring.
+5. Select **Continue to sign in** in the demo. Scan the new **sign-in QR** with
+   Ring's scanner and approve access using your new account.
    The file editor appears only after the SDK returns an authenticated session.
    Save a file to check the complete flow.
 
@@ -57,13 +60,18 @@ For a same-tab callback, it captures and removes `#hs=…&st=…&state=…` befo
 rendering, checks the pending state in session storage, and consumes it once.
 Invalid, unsolicited, expired, and replayed callbacks cannot start signup.
 
-`src/pubky.ts` uses the returned invite with `AuthFlowKind.signup` and
-`startGrantAuthFlow`. The client owns the resulting `signup_grant` QR, deeplink,
-and relay secret. An invite or Passport success message cannot establish a
-session; only SDK approval can. Account creation always uses grants even if
-cookie sign-in was selected. Pending flows are canceled when abandoned and freed
-after polling stops. Reloading while waiting for Ring abandons that pending
-flow; if Ring has already created the account, use the normal sign-in flow.
+`src/signup.ts` encodes the invite as `pubkyauth://direct_signup?hs=…&st=…`,
+[Ring's documented direct signup format](https://github.com/pubky/pubky-ring#deeplinks).
+This first QR contains only the homeserver and invite token. It creates an account
+in Ring without requesting app access or starting an authorization timeout.
+
+After account creation, **Continue to sign in** starts a fresh SDK sign-in flow
+using the selected grant/cookie method. This second QR requests access to the
+demo. An invite, pressing Continue, or a Passport success message cannot establish
+a session; only SDK approval can. Pending sign-in flows are canceled when
+abandoned and freed after polling stops. Invites stay in memory and are discarded
+when leaving the invite step or reloading. If Ring has already created the
+account, use the normal sign-in flow after a reload.
 
 ## Local development
 
@@ -87,7 +95,7 @@ Optional Vite environment variables:
 | Variable                       | Purpose                                                          |
 | ------------------------------ | ---------------------------------------------------------------- |
 | `VITE_PASSPORT_ORIGIN`         | Default Passport origin; the `?passport=` parameter overrides it |
-| `VITE_PUBKY_HTTP_RELAY`        | Custom relay for sign-in and signup                              |
+| `VITE_PUBKY_HTTP_RELAY`        | Custom relay for sign-in                                         |
 | `VITE_PUBKY_TESTNET=true`      | Use the SDK's testnet configuration                              |
 | `VITE_PUBKY_TESTNET_HOST`      | Optional testnet host                                            |
 | `VITE_PUBKY_STORAGE_NAMESPACE` | Extra prefix for saved-session references                        |
@@ -107,8 +115,9 @@ npm run audit
 Unit tests cover SDK flow selection, session persistence, callback validation,
 replays, expiry, and duplicate acknowledgements. Browser tests cover popup and
 same-tab returns, fallback navigation, blocked popups, mobile navigation, and
-the distinction between receiving an invite and approving a session. A separate
-browser test uses the real SDK to construct the signup grant. Tests mock Passport
+the distinction between receiving an invite and approving a session. They decode
+the rendered QR to verify that it contains the invite. A separate browser test
+uses the real SDK for the subsequent sign-in grant. Tests mock Passport
 verification and relay traffic; they send no SMS and pay no invoices. Live
 Homegate verification and Ring approval require manual testing against your v2
 deployment.

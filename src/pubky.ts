@@ -9,7 +9,6 @@ import {
   TESTNET_HOST,
 } from './config'
 import { createPassportCallbacks } from './passport'
-import type { SignupInvite } from './signup'
 
 const SESSION_KEY = STORAGE_NAMESPACE
   ? `${STORAGE_NAMESPACE}:${APP_CLIENT_ID}:session`
@@ -66,16 +65,6 @@ export async function startAuthFlow(authMethod: AuthMethod): Promise<AppAuthFlow
         })
       : pubky.startCookieAuthFlow(APP_CAPABILITIES, AuthFlowKind.signin(), HTTP_RELAY, xCallback)
   return pollAuthFlow(flow, attemptId)
-}
-
-/** Self-custody signup always uses grants; its authorization URL stays in this client. */
-export async function startSignupFlow(invite: SignupInvite): Promise<AppAuthFlow> {
-  const flow = await pubky.startGrantAuthFlow(
-    APP_CAPABILITIES,
-    AuthFlowKind.signup(PublicKey.from(invite.hs), invite.st),
-    { clientId: APP_CLIENT_ID, relay: HTTP_RELAY },
-  )
-  return pollAuthFlow(flow, crypto.randomUUID())
 }
 
 function pollAuthFlow(flow: PollableAuthFlow, attemptId: string): AppAuthFlow {

@@ -36,7 +36,7 @@ vi.mock('@synonymdev/pubky', () => {
   Pubky.testnet = vi.fn(() => sdk.client)
 
   return {
-    AuthFlowKind: { signin: vi.fn(() => 'signin-kind'), signup: vi.fn((hs, st) => ({ hs, st })) },
+    AuthFlowKind: { signin: vi.fn(() => 'signin-kind') },
     Keypair: { random: vi.fn() },
     Pubky,
     PublicKey: { from: vi.fn((value) => value) },
@@ -53,7 +53,7 @@ vi.mock('./config', () => ({
   TESTNET_HOST: undefined,
 }))
 
-import { restoreSavedSession, saveSession, startAuthFlow, startSignupFlow } from './pubky'
+import { restoreSavedSession, saveSession, startAuthFlow } from './pubky'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -74,18 +74,6 @@ afterEach(() => {
 })
 
 describe('startAuthFlow', () => {
-  it('creates a signup grant locally with the invite and no Passport authorization callback', async () => {
-    const invite = { hs: 'test-homeserver', st: 'single-use-test-token' }
-    const flow = await startSignupFlow(invite)
-    expect(sdk.client.startGrantAuthFlow).toHaveBeenCalledWith('/pub/template/:rw', invite, {
-      clientId: 'template',
-      relay: 'https://relay.example',
-    })
-    expect(sdk.client.startCookieAuthFlow).not.toHaveBeenCalled()
-    await expect(flow.awaitApproval).resolves.toBe(sdk.grantSession)
-    expect(sdk.grantFlow.free).toHaveBeenCalledOnce()
-  })
-
   it('starts and polls grant authentication', async () => {
     const flow = await startAuthFlow('grant')
 

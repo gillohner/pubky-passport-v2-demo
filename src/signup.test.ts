@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DirectSignupDeepLink } from '@synonymdev/pubky'
 import { APP_CLIENT_ID } from './config'
 import { DEFAULT_PASSPORT_SETTINGS } from './passport'
-import { cancelSignup, openSignup, readSignupReturn, takeSignupInvite } from './signup'
+import {
+  cancelSignup,
+  createRingSignupUrl,
+  openSignup,
+  readSignupReturn,
+  takeSignupInvite,
+} from './signup'
 
 const HS = '8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo'
 const ORIGIN = 'https://passport.staging.pubky.app'
@@ -82,6 +89,26 @@ function returnToApp(state: string, extra = '') {
   location.hash =
     new URLSearchParams({ hs: HS, st: 'single-use-test-token', state }).toString() + extra
 }
+
+describe('Ring signup invite', () => {
+  it.each(['single-use-test-token', 'token with reserved characters: &?+#=%'])(
+    'encodes a standalone invite accepted by the SDK: %s',
+    (st) => {
+      const url = createRingSignupUrl({ hs: HS, st })
+      const parsed = DirectSignupDeepLink.parse(url)
+      const homeserver = parsed.homeserver
+      try {
+        expect(new URL(url).hostname).toBe('direct_signup')
+        expect([...new URL(url).searchParams.keys()].sort()).toEqual(['hs', 'st'])
+        expect(homeserver.z32()).toBe(HS)
+        expect(parsed.signupToken).toBe(st)
+      } finally {
+        homeserver.free()
+        parsed.free()
+      }
+    },
+  )
+})
 
 describe('opening account creation', () => {
   it('passes only callback and fresh state, including for a custom deployment', () => {

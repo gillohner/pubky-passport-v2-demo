@@ -45,12 +45,12 @@ import {
   signOut,
   signupDevelopmentUser,
   startAuthFlow,
-  startSignupFlow,
   type AppAuthFlow,
 } from './pubky'
 import { deleteFile, filePath, listFiles, saveFile, type AppFile } from './storage'
 import {
   cancelSignup,
+  createRingSignupUrl,
   isMobileDevice,
   openSignup,
   readSignupReturn,
@@ -113,7 +113,7 @@ async function init() {
   if (callbackOutcome) setPassportOutcome(callbackOutcome)
   mount()
   if (invite) {
-    await refreshSignin(false, invite)
+    showSignupInvite(invite)
     return
   }
   const callbackError = state.error
@@ -128,7 +128,7 @@ async function init() {
     state.error = callbackError
     updateStatus()
   }
-  if (!state.session) await refreshSignin(Boolean(state.error))
+  if (!state.session) await refreshSignin({ preserveError: Boolean(state.error) })
 }
 
 function mount() {
@@ -210,7 +210,7 @@ function syncControls() {
         button.disabled =
           busy ||
           loading ||
-          Boolean(state.signin.signup || state.signin.waitingForInvite) ||
+          Boolean(state.signin.signupStep || state.signin.waitingForInvite) ||
           !passportOrigin(state.passport)
         break
       default:
@@ -223,7 +223,7 @@ function syncControls() {
     '.passport-options input, .passport-options select',
   )) {
     control.disabled =
-      busy || loading || Boolean(state.signin.signup || state.signin.waitingForInvite)
+      busy || loading || Boolean(state.signin.signupStep || state.signin.waitingForInvite)
   }
 
   updateAuthorizeLink(canUse, state.signin.authorizationUrl)
@@ -255,6 +255,9 @@ function handleClick(event: MouseEvent) {
   switch (button.id) {
     case 'refresh-ring-signin':
       void refreshSignin()
+      break
+    case 'continue-signup':
+      if (state.signin.signupStep === 'invite') void refreshSignin({ afterSignup: true })
       break
     case 'copy-ring-authorization-url':
       void handleCopyAuthorizationUrl('ring')
@@ -332,24 +335,44 @@ function handleSubmit(event: SubmitEvent) {
   if (form.id === 'file-form') void handleSaveFile(form)
 }
 
-async function refreshSignin(preserveError = false, invite?: SignupInvite) {
+function showSignupInvite(invite: SignupInvite) {
+  cancelSignin()
+  const authorizationUrl = createRingSignupUrl(invite)
+  state.signin = { signupStep: 'invite', authorizationUrl }
+  setNotice('Invitation received. Scan the signup QR with Ring on your phone.')
+  updateStatus()
+  updateSigninView(state.signin, state.busy, state.passport, state.authMethod)
+  syncControls()
+  openRingOnMobile(authorizationUrl)
+}
+
+function openRingOnMobile(url: string) {
+  if (!isMobileDevice()) return
+  try {
+    window.location.replace(url)
+  } catch {
+    // Keep the QR and explicit link if the browser rejects an automatic deeplink.
+  }
+}
+
+async function refreshSignin({ preserveError = false, afterSignup = false } = {}) {
   const token = Symbol('signin')
-  if (!invite) cancelSignup()
+  cancelSignup()
   cancelSignin()
 
   state.signin = {
     loading: true,
     token,
-    signup: Boolean(invite),
+    signupStep: afterSignup ? 'signin' : undefined,
   }
   if (!preserveError) state.error = undefined
-  state.notice = invite ? 'Invitation received. Preparing your Ring signup...' : undefined
+  state.notice = afterSignup ? 'Scan the sign-in QR with your new account in Ring.' : undefined
   updateStatus()
   updateSigninView(state.signin, state.busy, state.passport, state.authMethod)
   syncControls()
 
   try {
-    const flow = invite ? await startSignupFlow(invite) : await startAuthFlow(state.authMethod)
+    const flow = await startAuthFlow(state.authMethod)
     if (!isActiveSignin(token)) {
       flow.cancel()
       void flow.awaitApproval.catch(() => {})
@@ -360,33 +383,19 @@ async function refreshSignin(preserveError = false, invite?: SignupInvite) {
     state.signin = {
       authorizationUrl: flow.authorizationUrl,
       token,
-      signup: Boolean(invite),
-    }
-    if (invite) {
-      setNotice('Invitation received. Finish in Ring; this app signs in after Ring approval.')
-      updateStatus()
+      signupStep: afterSignup ? 'signin' : undefined,
     }
     updateSigninView(state.signin, state.busy, state.passport, state.authMethod)
     syncControls()
 
     void handleApproval(flow, token)
-    if (invite && isMobileDevice()) {
-      try {
-        window.location.replace(flow.authorizationUrl)
-      } catch {
-        // Keep the QR and explicit link if the browser rejects an automatic deeplink.
-      }
-    }
+    if (afterSignup) openRingOnMobile(flow.authorizationUrl)
   } catch (error) {
     if (!isActiveSignin(token)) return
 
     state.authFlow = undefined
     state.signin = {}
-    setError(
-      invite
-        ? new Error('Could not prepare Ring signup. Start a new create-account attempt.')
-        : error,
-    )
+    setError(error)
     updateStatus()
     updateSigninView(state.signin, state.busy, state.passport, state.authMethod)
     syncControls()
@@ -399,28 +408,18 @@ async function handleApproval(flow: AppAuthFlow, token: symbol) {
     if (!isActiveSignin(token)) return
 
     state.authFlow = undefined
-    const created = state.signin.signup
     await run('Completing Pubky sign-in...', async () => {
       await saveSession(session)
-      await activateSession(
-        session,
-        created ? 'Account created and signed in with Ring.' : 'Signed in with Pubky.',
-      )
+      await activateSession(session, 'Signed in with Pubky.')
     })
   } catch (error) {
     if (isAuthCanceled(error) || !isActiveSignin(token)) return
 
     state.authFlow = undefined
     closePassportPopup()
-    const signup = state.signin.signup
-    state.signin = isAuthExpired(error) ? { expired: true, token, signup } : { signup }
-    setError(
-      signup
-        ? new Error(
-            'Ring signup did not complete. Start a new attempt, or sign in if Ring already created the account.',
-          )
-        : error,
-    )
+    const signupStep = state.signin.signupStep
+    state.signin = isAuthExpired(error) ? { expired: true, token, signupStep } : { signupStep }
+    setError(error)
     updateStatus()
     updateSigninView(state.signin, state.busy, state.passport, state.authMethod)
     syncControls()
@@ -434,7 +433,13 @@ async function handleCopyAuthorizationUrl(kind: AuthorizationUrlKind) {
   try {
     await copyTextToClipboard(authorizationUrl)
     setCopied(kind, true)
-    setNotice(kind === 'ring' ? 'Authorization URL copied.' : 'Passport URL copied.')
+    setNotice(
+      kind === 'passport'
+        ? 'Passport URL copied.'
+        : state.signin.signupStep === 'invite'
+          ? 'Signup invite link copied.'
+          : 'Authorization URL copied.',
+    )
     updateStatus()
     updateCopyButton(kind, true)
 
@@ -471,12 +476,12 @@ function handleCreateAccount(inThisTab: boolean) {
           'Passport was closed. Create an account again, or sign in if you finished with Google.',
         ),
       )
-      void refreshSignin(true)
+      void refreshSignin({ preserveError: true })
     })
     cancelSignin()
     state.signin = { waitingForInvite: true }
     setNotice(
-      'Continue in Passport. The Ring signup link will appear after SMS or Lightning verification.',
+      'Continue in Passport. The Ring signup QR will appear after SMS or Lightning verification.',
     )
     updateStatus()
     updateSigninView(state.signin, state.busy, state.passport, state.authMethod)
@@ -491,7 +496,7 @@ function handlePassportPopupClosed() {
   if (!state.authFlow || state.busy) return
   setError(new Error('Passport popup was closed before authorization completed.'))
   updateStatus()
-  void refreshSignin(true)
+  void refreshSignin({ preserveError: true })
 }
 
 function handlePassportMessage(event: MessageEvent) {
@@ -499,7 +504,7 @@ function handlePassportMessage(event: MessageEvent) {
   try {
     const invite = takeSignupInvite(event)
     if (invite) {
-      void refreshSignin(false, invite)
+      showSignupInvite(invite)
       return
     }
     outcome = takePassportOutcome(event, state.authFlow?.attemptId)
@@ -513,7 +518,7 @@ function handlePassportMessage(event: MessageEvent) {
   setPassportOutcome(outcome)
   updateStatus()
 
-  if (outcome !== 'success') void refreshSignin(true)
+  if (outcome !== 'success') void refreshSignin({ preserveError: true })
 }
 
 function setPassportOutcome(outcome: PassportOutcome) {
@@ -666,7 +671,7 @@ function authorizationUrlFor(kind: AuthorizationUrlKind) {
 }
 
 function passportAuthorizationUrl() {
-  if (state.signin.signup || state.signin.waitingForInvite) return undefined
+  if (state.signin.signupStep || state.signin.waitingForInvite) return undefined
   const authorizationUrl = state.signin.authorizationUrl
   return authorizationUrl
     ? createPassportAuthorizationUrl(authorizationUrl, state.passport)

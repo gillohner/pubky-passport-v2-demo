@@ -7,6 +7,10 @@ export interface SignupInvite {
   st: string
 }
 
+export function createRingSignupUrl(invite: SignupInvite): string {
+  return `pubkyauth://direct_signup?${new URLSearchParams({ hs: invite.hs, st: invite.st })}`
+}
+
 interface SignupAttempt {
   state: string
   origin: string

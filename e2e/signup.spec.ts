@@ -1,4 +1,5 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
+import jsQR from 'jsqr'
 
 const PASSPORT = 'https://passport-v2.example'
 const HS = '8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo'
@@ -45,8 +46,8 @@ async function mockSessions(context: BrowserContext) {
         info: { publicKey: { toString: () => 'pubky-browser-test-user' } },
         storage: { list: async () => [] }
       };
-      function flow(kind, invite = {}) {
-        const params = new URLSearchParams({ secret: 'client-only-test-secret', ...invite });
+      function flow(kind) {
+        const params = new URLSearchParams({ secret: crypto.randomUUID() });
         let reject, approve;
         const awaitApproval = new Promise((resolve, fail) => {
           reject = fail;
@@ -69,7 +70,6 @@ async function mockSessions(context: BrowserContext) {
       export const signOut = async () => undefined;
       export const signupDevelopmentUser = async () => session;
       export const startAuthFlow = async (method) => flow(method === 'grant' ? 'signin_grant' : 'signin');
-      export const startSignupFlow = async (invite) => flow('signup_grant', invite);
       export const isAuthCanceled = (error) => error.name === 'AuthCanceled';
       export const isAuthExpired = (error) => error.name === 'AuthExpired';
     `,
@@ -84,11 +84,27 @@ async function openDemo(page: Page) {
 
 async function expectSignup(page: Page) {
   const ring = page.getByRole('link', { name: 'Open in Ring' })
-  await expect(ring).toHaveAttribute('href', /^pubkyauth:\/\/signup_grant\?/)
+  await expect(ring).toHaveAttribute('href', /^pubkyauth:\/\/direct_signup\?/)
   const url = new URL((await ring.getAttribute('href'))!)
   expect(url.searchParams.get('hs')).toBe(HS)
   expect(url.searchParams.get('st')).toBe(TOKEN)
-  await expect(page.getByLabel('Pubky Ring create-account QR code')).toBeVisible()
+  expect([...url.searchParams.keys()].sort()).toEqual(['hs', 'st'])
+  const qr = page.getByLabel('Pubky Ring signup invite QR code')
+  await expect(qr).toBeVisible()
+  await expect
+    .poll(async () => {
+      const pixels = await qr.evaluate((element: HTMLCanvasElement) => ({
+        width: element.width,
+        height: element.height,
+        data: Array.from(
+          element.getContext('2d')!.getImageData(0, 0, element.width, element.height).data,
+        ),
+      }))
+      return jsQR(Uint8ClampedArray.from(pixels.data), pixels.width, pixels.height)?.data
+    })
+    .toBe(url.href)
+  await expect(page.getByText('Ring → Add Pubky → Scan signup QR', { exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Continue to sign in' })).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Sign in with Passport' })).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0)
   expect(new URL(page.url()).hash).toBe('')
@@ -100,10 +116,15 @@ test.describe('signup handoff', () => {
     await mockPassport(context)
   })
 
-  test('popup invite creates a Ring grant; only SDK approval signs in', async ({ page }, info) => {
+  test('popup invite renders the signup QR before a separate Ring sign-in', async ({
+    page,
+  }, info) => {
     test.skip(info.project.name === 'mobile', 'Mobile defaults to same-tab navigation.')
     await openDemo(page)
     await page.getByLabel('Cookie', { exact: true }).check()
+    const originalSignin = await page
+      .getByRole('link', { name: 'Open in Ring' })
+      .getAttribute('href')
     const opened = page.waitForEvent('popup')
     await page.getByRole('button', { name: 'Create account', exact: true }).click()
     const popup = await opened
@@ -118,7 +139,20 @@ test.describe('signup handoff', () => {
     await popup.locator('#finish').click()
     await expectSignup(page)
     await page.evaluate(() => window.dispatchEvent(new Event('test-approve')))
-    await expect(page.getByText('Account created and signed in with Ring.')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Continue to sign in' }).click()
+    await expect(page.getByRole('heading', { name: '2. Sign in with Ring' })).toBeVisible()
+    const ring = page.getByRole('link', { name: 'Open in Ring' })
+    await expect(ring).toHaveAttribute('href', /^pubkyauth:\/\/signin\?/)
+    const signinUrl = new URL((await ring.getAttribute('href'))!)
+    expect(signinUrl.href).not.toBe(originalSignin)
+    expect(signinUrl.searchParams.has('hs')).toBe(false)
+    expect(signinUrl.searchParams.has('st')).toBe(false)
+    await expect(page.getByLabel('Pubky Ring signup invite QR code')).toHaveCount(0)
+    await expect(page.getByLabel('Pubky Ring sign-in QR code')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0)
+    await page.evaluate(() => window.dispatchEvent(new Event('test-approve')))
+    await expect(page.getByText('Signed in with Pubky.')).toBeVisible()
     await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
   })
 
@@ -183,13 +217,17 @@ test.describe('signup handoff', () => {
     await expect(page).toHaveURL(new RegExp(`^${PASSPORT}/create-account`))
     await page.locator('#finish').click()
     await expectSignup(page)
+    await page.getByRole('button', { name: 'Continue to sign in' }).click()
+    await expect(page.getByRole('link', { name: 'Open in Ring' })).toHaveAttribute(
+      'href',
+      /^pubkyauth:\/\/signin_grant\?/,
+    )
+    await page.evaluate(() => window.dispatchEvent(new Event('test-approve')))
+    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
   })
 })
 
-test('real SDK constructs the signup grant without sending client secrets to Passport', async ({
-  page,
-  context,
-}) => {
+test('real SDK creates a fresh sign-in grant after the invite QR', async ({ page, context }) => {
   await mockPassport(context)
   await context.route(/^https:\/\/(?!localhost:4173|passport-v2\.example)/, (route) =>
     route.fulfill({ status: 404, body: '' }),
@@ -198,6 +236,11 @@ test('real SDK constructs the signup grant without sending client secrets to Pas
   await page.getByRole('button', { name: 'Create in this tab' }).click()
   await page.locator('#finish').click()
   await expectSignup(page)
+  await page.getByRole('button', { name: 'Continue to sign in' }).click()
+  await expect(page.getByRole('link', { name: 'Open in Ring' })).toHaveAttribute(
+    'href',
+    /^pubkyauth:\/\/signin_grant\?/,
+  )
   const url = new URL(
     (await page.getByRole('link', { name: 'Open in Ring' }).getAttribute('href'))!,
   )
@@ -205,4 +248,6 @@ test('real SDK constructs the signup grant without sending client secrets to Pas
   expect(url.searchParams.get('caps')).toBe('/pub/passport-v2-demo/:rw')
   expect(url.searchParams.get('secret')).toBeTruthy()
   expect(url.searchParams.get('cpk')).toBeTruthy()
+  expect(url.searchParams.has('hs')).toBe(false)
+  expect(url.searchParams.has('st')).toBe(false)
 })

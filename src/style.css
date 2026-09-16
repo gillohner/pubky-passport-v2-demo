@@ -94,6 +94,7 @@ textarea { resize: vertical; }
 .event-list,
 .ring-signin,
 .ring-actions,
+.signup-next,
 .passport-signin,
 .passport-options,
 .passport-actions {
@@ -177,6 +178,9 @@ textarea { resize: vertical; }
   width: 100%;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+
+.signup-next { width: 100%; }
+.signup-next p { margin: 0; line-height: 1.5; }
 
 .passport-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .create-account-options { border-top: 1px solid #d8dde5; padding-top: 1rem; }
