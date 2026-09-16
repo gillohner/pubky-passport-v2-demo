@@ -18,15 +18,13 @@ file editing, and the event stream. Account creation adds the client side of
 2. Select **Create account**, then SMS or Lightning in Passport. Desktop opens a
    popup; mobile uses the current tab. **Create in this tab** explicitly tests the
    navigation callback on any device.
-3. Finish verification in Passport. The demo receives the homeserver invite and
-   displays a **signup invite QR** and **Open in Ring** link. On mobile it also
-   attempts to open Ring automatically; tap the link if the browser blocks that.
-4. On your phone, open **Ring → Add Pubky → Scan signup QR**. Scan the invite QR
-   on your desktop and finish creating your account in Ring.
-5. Select **Continue to sign in** in the demo. Scan the new **sign-in QR** with
-   Ring's scanner and approve access using your new account.
-   The file editor appears only after the SDK returns an authenticated session.
-   Save a file to check the complete flow.
+3. Finish verification in Passport. **Passport** shows the signup QR and Ring
+   installation screen. On your phone, open **Ring → Add Pubky → Scan signup QR**,
+   or use **Open Pubky Ring** when using Passport on mobile.
+4. Finish creating the account in Ring, then choose **Continue to sign in** in
+   Passport. The demo starts a fresh sign-in flow; it never receives the invite.
+5. Scan the demo's sign-in QR with your new account in Ring and approve access.
+   Only SDK approval opens the file editor. Save a file to check the complete flow.
 
 For Google, Passport creates its cloud account using the existing Google flow.
 Return to the demo and choose **Sign in with Passport** afterward. Google does
@@ -51,27 +49,20 @@ isolation boundary.
 key is given to Passport on this path. Attempts expire after 30 minutes.
 
 For popup messages, the demo validates the exact Passport origin, popup window,
-message type/version, state, canonical homeserver key, and bounded token. It
-retains the invite and consumes the pending state before acknowledging, and
-deduplicates retries. A popup that navigates back instead forwards the invite to
-its opener using the same state and window checks.
+`pubky-passport.signup-complete` type, version, state, and message ID. It consumes
+the pending state before acknowledging with `pubky-passport.signup-complete-ack`
+and deduplicates retries. A popup that navigates back forwards completion to its
+opener using the same state and window checks.
 
-For a same-tab callback, it captures and removes `#hs=…&st=…&state=…` before
+For a same-tab callback, it captures and removes `#signup=complete&state=…` before
 rendering, checks the pending state in session storage, and consumes it once.
-Invalid, unsolicited, expired, and replayed callbacks cannot start signup.
+Invalid, unsolicited, expired, and replayed callbacks cannot start a flow.
 
-`src/signup.ts` encodes the invite as `pubkyauth://direct_signup?hs=…&st=…`,
-[Ring's documented direct signup format](https://github.com/pubky/pubky-ring#deeplinks).
-This first QR contains only the homeserver and invite token. It creates an account
-in Ring without requesting app access or starting an authorization timeout.
-
-After account creation, **Continue to sign in** starts a fresh SDK sign-in flow
-using the selected grant/cookie method. This second QR requests access to the
-demo. An invite, pressing Continue, or a Passport success message cannot establish
-a session; only SDK approval can. Pending sign-in flows are canceled when
-abandoned and freed after polling stops. Invites stay in memory and are discarded
-when leaving the invite step or reloading. If Ring has already created the
-account, use the normal sign-in flow after a reload.
+Passport owns the invite, signup QR, Ring deeplink, and installation guidance.
+The demo only starts a new SDK sign-in flow using the selected grant/cookie
+method after completion. That completion is user-reported, not proof of account
+creation or authentication; only Ring approval through the SDK establishes a
+session. Abandoned flows are canceled and freed after polling stops.
 
 ## Local development
 
@@ -115,9 +106,8 @@ npm run audit
 Unit tests cover SDK flow selection, session persistence, callback validation,
 replays, expiry, and duplicate acknowledgements. Browser tests cover popup and
 same-tab returns, fallback navigation, blocked popups, mobile navigation, and
-the distinction between receiving an invite and approving a session. They decode
-the rendered QR to verify that it contains the invite. A separate browser test
-uses the real SDK for the subsequent sign-in grant. Tests mock Passport
+the distinction between signup completion and approving a session. A separate
+browser test uses the real SDK for the subsequent sign-in grant. Tests mock Passport
 verification and relay traffic; they send no SMS and pay no invoices. Live
 Homegate verification and Ring approval require manual testing against your v2
 deployment.

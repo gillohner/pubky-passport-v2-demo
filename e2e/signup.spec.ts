@@ -1,9 +1,6 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test'
-import jsQR from 'jsqr'
 
 const PASSPORT = 'https://passport-v2.example'
-const HS = '8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo'
-const TOKEN = 'single-use-browser-test-token'
 
 async function mockPassport(context: BrowserContext, fallback = false) {
   await context.route(`${PASSPORT}/**`, (route) =>
@@ -11,21 +8,20 @@ async function mockPassport(context: BrowserContext, fallback = false) {
       contentType: 'text/html',
       body: `<!doctype html><title>Test Passport</title>
       <h1>Create your account</h1>
-      <button id="finish">Finish SMS or Lightning verification</button>
+      <button id="finish">Continue to sign in after creating the account in Ring</button>
       <button id="wrong-state">Send invalid state</button>
       <script>
         const params = new URLSearchParams(location.hash.slice(1));
         const callback = new URL(params.get('callback'));
         const state = params.get('state');
-        const invite = { hs: ${JSON.stringify(HS)}, st: ${JSON.stringify(TOKEN)} };
         function send(returnState) {
           if (window.opener && !${fallback}) {
             window.opener.postMessage({
-              type: 'pubky-passport.signup-invite', version: 1,
-              messageId: 'browser-test', state: returnState, ...invite
+              type: 'pubky-passport.signup-complete', version: 1,
+              messageId: 'browser-test', state: returnState
             }, callback.origin);
           } else {
-            callback.hash = new URLSearchParams({ ...invite, state: returnState });
+            callback.hash = new URLSearchParams({ signup: 'complete', state: returnState });
             location.replace(callback.href);
           }
         }
@@ -82,30 +78,13 @@ async function openDemo(page: Page) {
   await expect(page.getByRole('button', { name: 'Create account', exact: true })).toBeEnabled()
 }
 
-async function expectSignup(page: Page) {
-  const ring = page.getByRole('link', { name: 'Open in Ring' })
-  await expect(ring).toHaveAttribute('href', /^pubkyauth:\/\/direct_signup\?/)
-  const url = new URL((await ring.getAttribute('href'))!)
-  expect(url.searchParams.get('hs')).toBe(HS)
-  expect(url.searchParams.get('st')).toBe(TOKEN)
-  expect([...url.searchParams.keys()].sort()).toEqual(['hs', 'st'])
-  const qr = page.getByLabel('Pubky Ring signup invite QR code')
-  await expect(qr).toBeVisible()
-  await expect
-    .poll(async () => {
-      const pixels = await qr.evaluate((element: HTMLCanvasElement) => ({
-        width: element.width,
-        height: element.height,
-        data: Array.from(
-          element.getContext('2d')!.getImageData(0, 0, element.width, element.height).data,
-        ),
-      }))
-      return jsQR(Uint8ClampedArray.from(pixels.data), pixels.width, pixels.height)?.data
-    })
-    .toBe(url.href)
-  await expect(page.getByText('Ring → Add Pubky → Scan signup QR', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Continue to sign in' })).toBeEnabled()
-  await expect(page.getByRole('button', { name: 'Sign in with Passport' })).toBeDisabled()
+async function expectSignin(page: Page) {
+  await expect(page.getByRole('link', { name: 'Open in Ring' })).toHaveAttribute(
+    'href',
+    /^pubkyauth:\/\/signin(_grant)?\?/,
+  )
+  await expect(page.getByLabel('Pubky Ring sign-in QR code')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Continue to sign in' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0)
   expect(new URL(page.url()).hash).toBe('')
 }
@@ -116,7 +95,7 @@ test.describe('signup handoff', () => {
     await mockPassport(context)
   })
 
-  test('popup invite renders the signup QR before a separate Ring sign-in', async ({
+  test('popup completion starts sign-in and still requires Ring approval', async ({
     page,
   }, info) => {
     test.skip(info.project.name === 'mobile', 'Mobile defaults to same-tab navigation.')
@@ -137,11 +116,7 @@ test.describe('signup handoff', () => {
     await popup.locator('#wrong-state').click()
     await expect(page.getByText('Continue in Passport', { exact: true })).toBeVisible()
     await popup.locator('#finish').click()
-    await expectSignup(page)
-    await page.evaluate(() => window.dispatchEvent(new Event('test-approve')))
-    await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0)
-    await page.getByRole('button', { name: 'Continue to sign in' }).click()
-    await expect(page.getByRole('heading', { name: '2. Sign in with Ring' })).toBeVisible()
+    await expectSignin(page)
     const ring = page.getByRole('link', { name: 'Open in Ring' })
     await expect(ring).toHaveAttribute('href', /^pubkyauth:\/\/signin\?/)
     const signinUrl = new URL((await ring.getAttribute('href'))!)
@@ -156,11 +131,11 @@ test.describe('signup handoff', () => {
     await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
   })
 
-  test('same-tab return is scrubbed and creates the signup QR', async ({ page }) => {
+  test('same-tab completion is scrubbed and starts sign-in', async ({ page }) => {
     await openDemo(page)
     await page.getByRole('button', { name: 'Create in this tab' }).click()
     await page.locator('#finish').click()
-    await expectSignup(page)
+    await expectSignin(page)
     await expect(page.getByLabel('Custom Passport URL')).toHaveValue(PASSPORT)
     await page.getByRole('button', { name: 'Back to sign in' }).click()
     await expect(page.getByRole('link', { name: 'Open in Ring' })).toHaveAttribute(
@@ -170,7 +145,7 @@ test.describe('signup handoff', () => {
     await expect(page.getByRole('button', { name: 'Create account', exact: true })).toBeEnabled()
   })
 
-  test('fallback navigation in a popup returns the invite to its opener', async ({
+  test('fallback navigation in a popup returns completion to its opener', async ({
     page,
     context,
   }, info) => {
@@ -181,7 +156,7 @@ test.describe('signup handoff', () => {
     await page.getByRole('button', { name: 'Create account', exact: true }).click()
     const popup = await opened
     await popup.locator('#finish').click()
-    await expectSignup(page)
+    await expectSignin(page)
     await expect.poll(() => popup.isClosed()).toBe(true)
   })
 
@@ -195,12 +170,12 @@ test.describe('signup handoff', () => {
     await expect(page.getByText(/Passport popup was blocked/)).toBeVisible()
     await page.getByRole('button', { name: 'Create in this tab' }).click()
     await page.locator('#finish').click()
-    await expectSignup(page)
+    await expectSignin(page)
   })
 
   test('unsolicited callback is scrubbed without starting signup', async ({ page }) => {
     await page.goto(
-      `/#${new URLSearchParams({ hs: HS, st: TOKEN, state: 'not-an-active-attempt' })}`,
+      `/#${new URLSearchParams({ signup: 'complete', state: 'not-an-active-attempt' })}`,
     )
     await expect(page.getByText(/expired or belongs to another tab/)).toBeVisible()
     await expect(page.getByRole('link', { name: 'Open in Ring' })).toHaveAttribute(
@@ -216,8 +191,7 @@ test.describe('signup handoff', () => {
     await page.getByRole('button', { name: 'Create account', exact: true }).click()
     await expect(page).toHaveURL(new RegExp(`^${PASSPORT}/create-account`))
     await page.locator('#finish').click()
-    await expectSignup(page)
-    await page.getByRole('button', { name: 'Continue to sign in' }).click()
+    await expectSignin(page)
     await expect(page.getByRole('link', { name: 'Open in Ring' })).toHaveAttribute(
       'href',
       /^pubkyauth:\/\/signin_grant\?/,
@@ -227,16 +201,20 @@ test.describe('signup handoff', () => {
   })
 })
 
-test('real SDK creates a fresh sign-in grant after the invite QR', async ({ page, context }) => {
+test('real SDK creates a fresh sign-in grant after Passport completion', async ({
+  page,
+  context,
+}) => {
   await mockPassport(context)
-  await context.route(/^https:\/\/(?!localhost:4173|passport-v2\.example)/, (route) =>
-    route.fulfill({ status: 404, body: '' }),
-  )
+  await context.route(/^https:\/\/(?!localhost:4173|passport-v2\.example)/, (route) => {
+    // Keep the real SDK waiting for approval while inspecting its generated link.
+    if (new URL(route.request().url()).hostname === 'httprelay.pubky.app') return
+    return route.fulfill({ status: 404, body: '' })
+  })
   await openDemo(page)
   await page.getByRole('button', { name: 'Create in this tab' }).click()
   await page.locator('#finish').click()
-  await expectSignup(page)
-  await page.getByRole('button', { name: 'Continue to sign in' }).click()
+  await expectSignin(page)
   await expect(page.getByRole('link', { name: 'Open in Ring' })).toHaveAttribute(
     'href',
     /^pubkyauth:\/\/signin_grant\?/,

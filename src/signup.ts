@@ -1,15 +1,5 @@
-import { PublicKey } from '@synonymdev/pubky'
 import { APP_CLIENT_ID } from './config'
 import { passportOrigin, type PassportSettings } from './passport'
-
-export interface SignupInvite {
-  hs: string
-  st: string
-}
-
-export function createRingSignupUrl(invite: SignupInvite): string {
-  return `pubkyauth://direct_signup?${new URLSearchParams({ hs: invite.hs, st: invite.st })}`
-}
 
 interface SignupAttempt {
   state: string
@@ -18,8 +8,8 @@ interface SignupAttempt {
 }
 
 const STORAGE_KEY = `${APP_CLIENT_ID}:signup-attempt`
-const INVITE_TYPE = 'pubky-passport.signup-invite'
-const INVITE_ACK_TYPE = 'pubky-passport.signup-invite-ack'
+const COMPLETE_TYPE = 'pubky-passport.signup-complete'
+const COMPLETE_ACK_TYPE = 'pubky-passport.signup-complete-ack'
 const RETURN_TYPE = `${APP_CLIENT_ID}.signup-return`
 const RETURN_ACK_TYPE = `${APP_CLIENT_ID}.signup-return-ack`
 const ATTEMPT_LIFETIME_MS = 30 * 60_000
@@ -28,7 +18,7 @@ const CLOSE_DELAY_MS = 3_200
 let attempt: SignupAttempt | undefined
 let popup: Window | null | undefined
 let closeTimer: number | undefined
-let received: SignupInvite | undefined
+let received = false
 
 /** Open from a user gesture. Passport receives only the callback and a fresh state. */
 export function openSignup(settings: PassportSettings, inThisTab: boolean, onClose: () => void) {
@@ -64,14 +54,14 @@ export function openSignup(settings: PassportSettings, inThisTab: boolean, onClo
 }
 
 /** Validate, retain and acknowledge synchronously, before the caller starts SDK work. */
-export function takeSignupInvite(event: MessageEvent): SignupInvite | undefined {
-  if (!attempt || !popup || event.source !== popup || Date.now() >= attempt.expiresAt) return
+export function takeSignupCompletion(event: MessageEvent): boolean {
+  if (!attempt || !popup || event.source !== popup || Date.now() >= attempt.expiresAt) return false
   const direct = event.origin === attempt.origin
   const returned = event.origin === window.location.origin
-  if (!direct && !returned) return
+  if (!direct && !returned) return false
   const data: unknown = event.data
-  if (!isRecord(data)) return
-  const expectedType = direct ? INVITE_TYPE : RETURN_TYPE
+  if (!isRecord(data)) return false
+  const expectedType = direct ? COMPLETE_TYPE : RETURN_TYPE
   if (
     data.type !== expectedType ||
     data.version !== 1 ||
@@ -80,29 +70,26 @@ export function takeSignupInvite(event: MessageEvent): SignupInvite | undefined 
     !data.messageId ||
     data.messageId.length > 128
   )
-    return
-  const invite = parseInvite(data)
-  if (!invite) return
+    return false
 
   if (received) {
-    if (received.hs === invite.hs && received.st === invite.st)
-      acknowledge(popup, event.origin, data.messageId, direct)
-    return
+    acknowledge(popup, event.origin, data.messageId, direct)
+    return false
   }
 
-  received = invite
+  received = true
   sessionStorage.removeItem(STORAGE_KEY)
   window.clearInterval(closeTimer)
   acknowledge(popup, event.origin, data.messageId, direct)
   closeTimer = window.setTimeout(cancelSignup, CLOSE_DELAY_MS)
-  return invite
+  return true
 }
 
 /** Capture and scrub the callback before rendering. A return never proves authentication. */
-export async function readSignupReturn(): Promise<SignupInvite | 'forwarded' | undefined> {
+export async function readSignupReturn(): Promise<'complete' | 'forwarded' | undefined> {
   const hash = window.location.hash.slice(1)
   const params = new URLSearchParams(hash)
-  if (!['hs', 'st', 'state'].some((key) => params.has(key))) return
+  if (!['signup', 'state'].some((key) => params.has(key))) return
   window.history.replaceState(
     window.history.state,
     '',
@@ -110,20 +97,19 @@ export async function readSignupReturn(): Promise<SignupInvite | 'forwarded' | u
   )
 
   const keys = [...params.keys()]
-  const invite = parseInvite({ hs: params.get('hs'), st: params.get('st') })
   const state = params.get('state')
   if (
     hash.length > 8_192 ||
-    keys.length !== 3 ||
-    new Set(keys).size !== 3 ||
-    keys.some((key) => !['hs', 'st', 'state'].includes(key)) ||
+    keys.length !== 2 ||
+    new Set(keys).size !== 2 ||
+    keys.some((key) => !['signup', 'state'].includes(key)) ||
     !state ||
     !/^[A-Za-z0-9_-]{16,128}$/.test(state) ||
-    !invite
+    params.get('signup') !== 'complete'
   )
     throw new Error('Invalid create-account return. Start a new attempt.')
 
-  if (await forwardReturnToOpener(invite, state)) {
+  if (await forwardReturnToOpener(state)) {
     sessionStorage.removeItem(STORAGE_KEY)
     window.close()
     return 'forwarded'
@@ -134,14 +120,14 @@ export async function readSignupReturn(): Promise<SignupInvite | 'forwarded' | u
     throw new Error('This create-account attempt expired or belongs to another tab. Start again.')
   }
   sessionStorage.removeItem(STORAGE_KEY)
-  return invite
+  return 'complete'
 }
 
 export function cancelSignup() {
   window.clearInterval(closeTimer)
   closeTimer = undefined
   attempt = undefined
-  received = undefined
+  received = false
   sessionStorage.removeItem(STORAGE_KEY)
   const activePopup = popup
   popup = undefined
@@ -157,28 +143,6 @@ export function isMobileDevice() {
     /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
   )
-}
-
-function parseInvite(data: Record<string, unknown>): SignupInvite | undefined {
-  if (
-    typeof data.hs !== 'string' ||
-    data.hs.length !== 52 ||
-    typeof data.st !== 'string' ||
-    !data.st.trim() ||
-    data.st.length > 1_024
-  )
-    return
-  try {
-    const key = PublicKey.from(data.hs)
-    try {
-      if (key.z32() !== data.hs) return
-    } finally {
-      key.free()
-    }
-    return { hs: data.hs, st: data.st }
-  } catch {
-    return undefined
-  }
 }
 
 function readAttempt(): SignupAttempt | undefined {
@@ -204,7 +168,7 @@ function readAttempt(): SignupAttempt | undefined {
 function acknowledge(target: Window, origin: string, messageId: string, direct: boolean) {
   target.postMessage(
     {
-      type: direct ? INVITE_ACK_TYPE : RETURN_ACK_TYPE,
+      type: direct ? COMPLETE_ACK_TYPE : RETURN_ACK_TYPE,
       version: 1,
       messageId,
     },
@@ -212,11 +176,11 @@ function acknowledge(target: Window, origin: string, messageId: string, direct: 
   )
 }
 
-function forwardReturnToOpener(invite: SignupInvite, state: string): Promise<boolean> {
+function forwardReturnToOpener(state: string): Promise<boolean> {
   const opener = window.opener as Window | null
   if (!opener || opener.closed) return Promise.resolve(false)
   const messageId = crypto.randomUUID()
-  const message = { type: RETURN_TYPE, version: 1, messageId, state, ...invite }
+  const message = { type: RETURN_TYPE, version: 1, messageId, state }
   return new Promise((resolve) => {
     const onMessage = (event: MessageEvent) => {
       const data: unknown = event.data

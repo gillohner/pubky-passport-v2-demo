@@ -16,8 +16,8 @@ export interface SigninState {
   expired?: boolean
   loading?: boolean
   token?: symbol
-  signupStep?: 'invite' | 'signin'
-  waitingForInvite?: boolean
+  signupStep?: 'signin'
+  waitingForSignup?: boolean
 }
 
 export type AuthorizationUrlKind = 'ring' | 'passport'
@@ -115,28 +115,17 @@ function authCardsHtml(
 function ringCardHtml(signin: SigninState, busy?: string) {
   const { authorizationUrl, expired, loading, ringCopied } = signin
   const canUse = !busy && Boolean(authorizationUrl) && !loading && !expired
-  const isInvite = signin.signupStep === 'invite'
-  const title = isInvite
-    ? '1. Create your account in Ring'
-    : signin.signupStep === 'signin'
-      ? '2. Sign in with Ring'
-      : 'Sign in with Pubky Ring'
+  const title = 'Sign in with Pubky Ring'
 
   return `
     <section id="ring-signin-card" class="panel auth-card">
       <div class="section-header">
         <h2>${title}</h2>
         <button id="refresh-ring-signin" type="button" ${disabledAttr(Boolean(busy) || Boolean(loading))}>
-          ${signin.signupStep || signin.waitingForInvite ? 'Back to sign in' : expired ? 'New link' : 'Refresh'}
+          ${signin.signupStep || signin.waitingForSignup ? 'Back to sign in' : expired ? 'New link' : 'Refresh'}
         </button>
       </div>
-      ${
-        isInvite
-          ? '<p class="muted">On your phone, open <strong>Ring → Add Pubky → Scan signup QR</strong>. Scan this invite QR and finish creating your account in Ring.</p>'
-          : signin.signupStep === 'signin'
-            ? '<p class="muted">Use Ring’s scanner with your new account to scan this sign-in QR, then approve access to the demo.</p>'
-            : ''
-      }
+      ${signin.signupStep === 'signin' ? '<p class="muted">Scan this sign-in QR with the account you created in Ring to approve access to the demo.</p>' : ''}
       <div class="ring-signin">
         <div class="qr-frame">
           ${ringQrSlot(signin)}
@@ -147,14 +136,7 @@ function ringCardHtml(signin: SigninState, busy?: string) {
             ${ringCopied ? 'Copied' : COPY_LINK_LABEL}
           </button>
         </div>
-        ${
-          isInvite
-            ? `<div class="signup-next">
-                <p class="muted">Once your account is ready in Ring, continue here to sign in.</p>
-                <button id="continue-signup" class="primary" type="button" ${disabledAttr(!canUse)}>Continue to sign in</button>
-              </div>`
-            : ''
-        }
+
       </div>
     </section>
   `
@@ -172,7 +154,7 @@ function passportCardHtml(
   const canUse =
     !busy &&
     !signin.signupStep &&
-    !signin.waitingForInvite &&
+    !signin.waitingForSignup &&
     Boolean(authorizationUrl) &&
     !loading &&
     !expired &&
@@ -181,7 +163,7 @@ function passportCardHtml(
     !busy &&
     !loading &&
     !signin.signupStep &&
-    !signin.waitingForInvite &&
+    !signin.waitingForSignup &&
     Boolean(passportOrigin(passport))
 
   return `
@@ -255,7 +237,7 @@ function passportCardHtml(
         </div>
         <div class="create-account-options">
           <h3>Create account</h3>
-          <p class="muted">Choose SMS or Lightning in Passport, then scan the invite QR with Ring on your phone to create your account. Google creates a cloud account in Passport; return here to sign in.</p>
+          <p class="muted">Choose SMS or Lightning, then scan the signup QR in Passport with Ring on your phone. Google creates a cloud account in Passport; return here to sign in.</p>
           <div class="passport-actions">
             <button id="create-account" class="primary" type="button" ${disabledAttr(!canCreate)}>Create account</button>
             <button id="create-account-in-tab" type="button" ${disabledAttr(!canCreate)}>Create in this tab</button>
@@ -293,9 +275,9 @@ function authorizeRingLinkHtml(canUse: boolean, authorizationUrl: string | undef
 function ringQrSlot(signin: SigninState) {
   const { authorizationUrl, expired, loading } = signin
 
-  if (signin.waitingForInvite) {
+  if (signin.waitingForSignup) {
     return ringQrPlaceholder(
-      '<strong>Continue in Passport</strong><span>After SMS or Lightning verification, your Ring QR appears here.</span>',
+      '<strong>Continue in Passport</strong><span>Verify and scan the signup QR in Passport. Return here when your account is ready.</span>',
     )
   }
 
@@ -321,7 +303,7 @@ function ringQrSlot(signin: SigninState) {
       class="ring-qr"
       width="${RING_QR_SIZE}"
       height="${RING_QR_SIZE}"
-      aria-label="Pubky Ring ${signin.signupStep === 'invite' ? 'signup invite' : 'sign-in'} QR code"
+      aria-label="Pubky Ring sign-in QR code"
     ></canvas>
   `
 }

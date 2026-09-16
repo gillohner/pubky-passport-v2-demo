@@ -1,16 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DirectSignupDeepLink } from '@synonymdev/pubky'
 import { APP_CLIENT_ID } from './config'
 import { DEFAULT_PASSPORT_SETTINGS } from './passport'
-import {
-  cancelSignup,
-  createRingSignupUrl,
-  openSignup,
-  readSignupReturn,
-  takeSignupInvite,
-} from './signup'
+import { cancelSignup, openSignup, readSignupReturn, takeSignupCompletion } from './signup'
 
-const HS = '8pinxxgqs41n4aididenw5apqp1urfmzdztr8jt4abrkdn435ewo'
 const ORIGIN = 'https://passport.staging.pubky.app'
 const APP_ORIGIN = 'https://app.example'
 const STORAGE_KEY = `${APP_CLIENT_ID}:signup-attempt`
@@ -74,41 +66,18 @@ function message(
     origin,
     source,
     data: {
-      type: 'pubky-passport.signup-invite',
+      type: 'pubky-passport.signup-complete',
       version: 1,
       messageId: 'invite-1',
       state,
-      hs: HS,
-      st: 'single-use-test-token',
       ...data,
     },
   } as MessageEvent
 }
 
 function returnToApp(state: string, extra = '') {
-  location.hash =
-    new URLSearchParams({ hs: HS, st: 'single-use-test-token', state }).toString() + extra
+  location.hash = new URLSearchParams({ signup: 'complete', state }).toString() + extra
 }
-
-describe('Ring signup invite', () => {
-  it.each(['single-use-test-token', 'token with reserved characters: &?+#=%'])(
-    'encodes a standalone invite accepted by the SDK: %s',
-    (st) => {
-      const url = createRingSignupUrl({ hs: HS, st })
-      const parsed = DirectSignupDeepLink.parse(url)
-      const homeserver = parsed.homeserver
-      try {
-        expect(new URL(url).hostname).toBe('direct_signup')
-        expect([...new URL(url).searchParams.keys()].sort()).toEqual(['hs', 'st'])
-        expect(homeserver.z32()).toBe(HS)
-        expect(parsed.signupToken).toBe(st)
-      } finally {
-        homeserver.free()
-        parsed.free()
-      }
-    },
-  )
-})
 
 describe('opening account creation', () => {
   it('passes only callback and fresh state, including for a custom deployment', () => {
@@ -149,23 +118,23 @@ describe('opening account creation', () => {
   })
 })
 
-describe('receiving invites', () => {
+describe('receiving completion', () => {
   it('consumes state before acknowledging and accepts only once', () => {
     const state = start()
     popup.postMessage.mockImplementation(() =>
       expect(sessionStorage.getItem(STORAGE_KEY)).toBeNull(),
     )
     const event = message(state)
-    expect(takeSignupInvite(event)).toEqual({ hs: HS, st: 'single-use-test-token' })
+    expect(takeSignupCompletion(event)).toBe(true)
     expect(popup.postMessage).toHaveBeenCalledWith(
       {
-        type: 'pubky-passport.signup-invite-ack',
+        type: 'pubky-passport.signup-complete-ack',
         version: 1,
         messageId: 'invite-1',
       },
       ORIGIN,
     )
-    expect(takeSignupInvite(event)).toBeUndefined()
+    expect(takeSignupCompletion(event)).toBe(false)
     expect(popup.postMessage).toHaveBeenCalledTimes(2)
     vi.advanceTimersByTime(3_200)
     expect(popup.close).toHaveBeenCalledOnce()
@@ -176,35 +145,31 @@ describe('receiving invites', () => {
     ['wrong state', { state: 'another-attempt-state' }, ORIGIN],
     ['wrong version', { version: 2 }, ORIGIN],
     ['wrong type', { type: 'pubky-passport.authorization-outcome' }, ORIGIN],
-    ['invalid homeserver', { hs: 'x'.repeat(52) }, ORIGIN],
-    ['prefixed homeserver', { hs: `pubky${HS}` }, ORIGIN],
-    ['empty token', { st: ' ' }, ORIGIN],
-    ['oversized token', { st: 'x'.repeat(1_025) }, ORIGIN],
     ['missing message id', { messageId: '' }, ORIGIN],
   ])('rejects %s', (_name, data, origin) => {
     const state = start()
-    expect(takeSignupInvite(message(state, data, origin))).toBeUndefined()
+    expect(takeSignupCompletion(message(state, data, origin))).toBe(false)
     expect(popup.postMessage).not.toHaveBeenCalled()
     expect(sessionStorage.getItem(STORAGE_KEY)).not.toBeNull()
   })
 
   it('rejects messages from another window or expired attempts', () => {
     const state = start()
-    expect(takeSignupInvite(message(state, {}, ORIGIN, {}))).toBeUndefined()
+    expect(takeSignupCompletion(message(state, {}, ORIGIN, {}))).toBe(false)
     vi.advanceTimersByTime(30 * 60_000)
-    expect(takeSignupInvite(message(state))).toBeUndefined()
+    expect(takeSignupCompletion(message(state))).toBe(false)
     expect(popup.postMessage).not.toHaveBeenCalled()
   })
 
   it('acknowledges a callback fallback without creating a second flow', () => {
     const state = start()
-    expect(takeSignupInvite(message(state))).toBeDefined()
+    expect(takeSignupCompletion(message(state))).toBe(true)
     const returned = message(
       state,
       { type: `${APP_CLIENT_ID}.signup-return`, messageId: 'fallback' },
       APP_ORIGIN,
     )
-    expect(takeSignupInvite(returned)).toBeUndefined()
+    expect(takeSignupCompletion(returned)).toBe(false)
     expect(popup.postMessage).toHaveBeenLastCalledWith(
       {
         type: `${APP_CLIENT_ID}.signup-return-ack`,
@@ -218,8 +183,8 @@ describe('receiving invites', () => {
   it('accepts a same-origin callback only from the original popup', () => {
     const state = start()
     const data = { type: `${APP_CLIENT_ID}.signup-return` }
-    expect(takeSignupInvite(message(state, data, APP_ORIGIN, {}))).toBeUndefined()
-    expect(takeSignupInvite(message(state, data, APP_ORIGIN))).toBeDefined()
+    expect(takeSignupCompletion(message(state, data, APP_ORIGIN, {}))).toBe(false)
+    expect(takeSignupCompletion(message(state, data, APP_ORIGIN))).toBe(true)
   })
 })
 
@@ -229,13 +194,13 @@ describe('navigation returns', () => {
     returnToApp(state)
     const result = readSignupReturn()
     expect(location.hash).toBe('')
-    await expect(result).resolves.toEqual({ hs: HS, st: 'single-use-test-token' })
+    await expect(result).resolves.toBe('complete')
     expect(sessionStorage.getItem(STORAGE_KEY)).toBeNull()
     returnToApp(state)
     await expect(readSignupReturn()).rejects.toThrow('expired or belongs to another tab')
   })
 
-  it.each(['&st=duplicate', '&secret=unexpected'])(
+  it.each(['&signup=duplicate', '&secret=unexpected'])(
     'rejects extra or duplicate fields: %s',
     async (extra) => {
       returnToApp(start(true), extra)
