@@ -103,7 +103,7 @@ export function createPassportAuthorizationUrl(
 ): string | undefined {
   const origin = passportOrigin(settings)
   if (!origin) return undefined
-  return `${origin}/authorize#d=${encodeURIComponent(pubkyAuthorizationUrl)}`
+  return `${origin}/#d=${encodeURIComponent(pubkyAuthorizationUrl)}`
 }
 
 export function openPassportPopup(authorizationUrl: string, onClose: () => void): boolean {
@@ -158,6 +158,12 @@ export function takePassportOutcome(
     const activeOrigin = popupOrigin
     acknowledgeOutcome(activePopup, activeOrigin, message.messageId)
     cacheAcknowledgedOutcome(activePopup, activeOrigin, message)
+    if (message.outcome === 'success') {
+      clearPopupCloseTimer()
+      clearPopupCloseGraceTimer()
+      return message.outcome
+    }
+
     popup = undefined
     popupOrigin = undefined
     clearPopupCloseTimer()

@@ -16,8 +16,6 @@ export interface SigninState {
   expired?: boolean
   loading?: boolean
   token?: symbol
-  signupStep?: 'signin'
-  waitingForSignup?: boolean
 }
 
 export type AuthorizationUrlKind = 'ring' | 'passport'
@@ -80,7 +78,7 @@ export function isAuthorizeRingLink(element: Element) {
 
 export async function renderRingSigninQr(signin: SigninState) {
   const canvas = document.querySelector<HTMLCanvasElement>('#ring-signin-qr')
-  // Ring scans the raw Pubky link, never Passport's /authorize#d wrapper.
+  // Ring scans the raw Pubky link, never Passport's /#d wrapper.
   const ringAuthorizationUrl = signin.authorizationUrl
   if (!canvas || !ringAuthorizationUrl || signin.expired) return
 
@@ -122,10 +120,9 @@ function ringCardHtml(signin: SigninState, busy?: string) {
       <div class="section-header">
         <h2>${title}</h2>
         <button id="refresh-ring-signin" type="button" ${disabledAttr(Boolean(busy) || Boolean(loading))}>
-          ${signin.signupStep || signin.waitingForSignup ? 'Back to sign in' : expired ? 'New link' : 'Refresh'}
+          ${expired ? 'New link' : 'Refresh'}
         </button>
       </div>
-      ${signin.signupStep === 'signin' ? '<p class="muted">Scan this sign-in QR with the account you created in Ring to approve access to the demo.</p>' : ''}
       <div class="ring-signin">
         <div class="qr-frame">
           ${ringQrSlot(signin)}
@@ -152,19 +149,7 @@ function passportCardHtml(
   const customOrigin = passport.location === 'custom' ? passportOrigin(passport) : undefined
   const customInvalid = passport.location === 'custom' && !customOrigin
   const canUse =
-    !busy &&
-    !signin.signupStep &&
-    !signin.waitingForSignup &&
-    Boolean(authorizationUrl) &&
-    !loading &&
-    !expired &&
-    Boolean(passportOrigin(passport))
-  const canCreate =
-    !busy &&
-    !loading &&
-    !signin.signupStep &&
-    !signin.waitingForSignup &&
-    Boolean(passportOrigin(passport))
+    !busy && Boolean(authorizationUrl) && !loading && !expired && Boolean(passportOrigin(passport))
 
   return `
     <section id="passport-signin-card" class="panel auth-card">
@@ -237,10 +222,9 @@ function passportCardHtml(
         </div>
         <div class="create-account-options">
           <h3>Create account</h3>
-          <p class="muted">Choose SMS or Lightning, then scan the signup QR in Passport with Ring on your phone. Google creates a cloud account in Passport; return here to sign in.</p>
+          <p class="muted">Passport uses this same authorization request while you create an account with SMS, Lightning, a manual invite, or Google. After setup, approve this demo without starting over.</p>
           <div class="passport-actions">
-            <button id="create-account" class="primary" type="button" ${disabledAttr(!canCreate)}>Create account</button>
-            <button id="create-account-in-tab" type="button" ${disabledAttr(!canCreate)}>Create in this tab</button>
+            <button id="create-account" class="primary" type="button" ${disabledAttr(!canUse)}>Create account in Passport</button>
           </div>
         </div>
         <div class="passport-actions">
@@ -274,12 +258,6 @@ function authorizeRingLinkHtml(canUse: boolean, authorizationUrl: string | undef
 
 function ringQrSlot(signin: SigninState) {
   const { authorizationUrl, expired, loading } = signin
-
-  if (signin.waitingForSignup) {
-    return ringQrPlaceholder(
-      '<strong>Continue in Passport</strong><span>Verify and scan the signup QR in Passport. Return here when your account is ready.</span>',
-    )
-  }
 
   if (loading) {
     return ringQrPlaceholder(`

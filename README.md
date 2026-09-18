@@ -3,9 +3,8 @@
 A separate mainnet client for testing Passport v2, based on the
 [basic Pubky app template](https://github.com/gillohner/pubky-app-templates/tree/main/basic-pubky-app).
 It preserves Ring and Passport sign-in, grant/cookie selection, saved sessions,
-file editing, and the event stream. Account creation adds the client side of
-[Passport #160](https://github.com/pubky/pubky-passport/issues/160) and
-[Passport PR #162](https://github.com/pubky/pubky-passport/pull/162).
+file editing, and the event stream. The Passport integration demonstrates the
+unified signer and account-creation flow.
 
 **[Open the demo](https://gillohner.github.io/pubky-passport-v2-demo/)**
 
@@ -14,21 +13,16 @@ file editing, and the event stream. Account creation adds the client side of
 1. Set **Passport URL** to **Custom URL** and enter the HTTPS origin of the v2
    deployment, such as `https://passport-v2.example.com`. The setting is remembered.
    The default is `https://passport.staging.pubky.app`; the selected deployment
-   must include the `/create-account` route from PR #162.
-2. Select **Create account**, then SMS or Lightning in Passport. Desktop opens a
-   popup; mobile uses the current tab. **Create in this tab** explicitly tests the
-   navigation callback on any device.
-3. Finish verification in Passport. **Passport** shows the signup QR and Ring
-   installation screen. On your phone, open **Ring → Add Pubky → Scan signup QR**,
-   or use **Open Pubky Ring** when using Passport on mobile.
-4. Finish creating the account in Ring, then choose **Continue to sign in** in
-   Passport. The demo starts a fresh sign-in flow; it never receives the invite.
-5. Scan the demo's sign-in QR with your new account in Ring and approve access.
-   Only SDK approval opens the file editor. Save a file to check the complete flow.
-
-For Google, Passport creates its cloud account using the existing Google flow.
-Return to the demo and choose **Sign in with Passport** afterward. Google does
-not return a Ring invite.
+   must provide Passport's unified signer at `/`.
+2. Select **Create account in Passport**. The demo opens Passport with the same
+   authorization request already displayed for Ring.
+3. In Passport, choose **Create an account**, then SMS, Lightning, or a manual
+   invite. Continue with Ring or keep the new identity in Passport. Google and
+   backup import are available from the same signer chooser.
+4. Finish setup and explicitly approve the demo's original permission request.
+   The demo keeps waiting on that SDK flow and does not create a replacement.
+5. Only verified SDK approval opens the file editor. Save a file to check the
+   complete flow.
 
 You can share a deployment selection with a link:
 
@@ -44,25 +38,20 @@ isolation boundary.
 
 ## Handoff contract
 
-`src/signup.ts` sends only a callback and fresh state to
-`/create-account#callback=…&state=…`. No authorization URL, relay secret, or client
-key is given to Passport on this path. Attempts expire after 30 minutes.
+The demo creates one authorization flow with the Pubky SDK and opens Passport at
+`/#d=${encodeURIComponent(flow.authorizationUrl)}`. The exact request is reused
+whether the user selects a saved identity, Google, backup import, Ring, another
+signer, or creates an account. The URL remains in memory and is never written to
+persistent client storage.
 
-For popup messages, the demo validates the exact Passport origin, popup window,
-`pubky-passport.signup-complete` type, version, state, and message ID. It consumes
-the pending state before acknowledging with `pubky-passport.signup-complete-ack`
-and deduplicates retries. A popup that navigates back forwards completion to its
-opener using the same state and window checks.
+Passport may send the existing, origin- and window-bound authorization outcome
+messages for local approval UX. A success message remains advisory: the demo
+keeps waiting for its SDK session and closes the popup only when SDK approval
+succeeds. Closing or blocking Passport does not cancel or replace the request.
 
-For a same-tab callback, it captures and removes `#signup=complete&state=…` before
-rendering, checks the pending state in session storage, and consumes it once.
-Invalid, unsolicited, expired, and replayed callbacks cannot start a flow.
-
-Passport owns the invite, signup QR, Ring deeplink, and installation guidance.
-The demo only starts a new SDK sign-in flow using the selected grant/cookie
-method after completion. That completion is user-reported, not proof of account
-creation or authentication; only Ring approval through the SDK establishes a
-session. Abandoned flows are canceled and freed after polling stops.
+Passport owns identity setup, invites, signup QR/deeplinks, backup verification,
+and local registration. The old `/create-account` route and separate
+`pubky-passport.signup-complete` callback protocol are not used.
 
 ## Local development
 
@@ -104,12 +93,11 @@ npm run audit
 ```
 
 Unit tests cover SDK flow selection, session persistence, callback validation,
-replays, expiry, and duplicate acknowledgements. Browser tests cover popup and
-same-tab returns, fallback navigation, blocked popups, mobile navigation, and
-the distinction between signup completion and approving a session. A separate
-browser test uses the real SDK for the subsequent sign-in grant. Tests mock Passport
-verification and relay traffic; they send no SMS and pay no invoices. Live
-Homegate verification and Ring approval require manual testing against your v2
+and duplicate acknowledgements. Browser tests verify that desktop and mobile
+hand the exact request to Passport's root route, retain it across popup closure,
+and wait for SDK approval even after a Passport success message. Tests mock
+Passport and relay approval; they send no SMS and pay no invoices. Live Homegate
+verification and Ring interoperability require manual testing against your v2
 deployment.
 
 The GitHub Actions workflow checks, builds, runs the browser suite, and deploys

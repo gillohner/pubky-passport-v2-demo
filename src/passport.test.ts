@@ -47,7 +47,7 @@ describe('Passport URL settings', () => {
       'pubkyauth://signin_grant?caps=%2Fpub%2Ftemplate%2F%3Arw&secret=relay-secret'
 
     expect(createPassportAuthorizationUrl(authorizationUrl, DEFAULT_PASSPORT_SETTINGS)).toBe(
-      `${STAGING_PASSPORT_ORIGIN}/authorize#d=${encodeURIComponent(authorizationUrl)}`,
+      `${STAGING_PASSPORT_ORIGIN}/#d=${encodeURIComponent(authorizationUrl)}`,
     )
   })
 })
@@ -104,7 +104,7 @@ describe('Passport popup', () => {
       }),
     })
 
-    const authorizationUrl = `${STAGING_PASSPORT_ORIGIN}/authorize#d=request`
+    const authorizationUrl = `${STAGING_PASSPORT_ORIGIN}/#d=request`
     expect(openPassportPopup(authorizationUrl, vi.fn())).toBe(true)
     expect(open).toHaveBeenCalledWith(
       authorizationUrl,
@@ -140,9 +140,7 @@ describe('Passport popup', () => {
     expect(popup.close).not.toHaveBeenCalled()
     expect(scheduledTimeouts.get(3_000)).toBeTypeOf('function')
     scheduledTimeouts.get(3_000)?.()
-    expect(scheduledTimeouts.get(3_100)).toBeTypeOf('function')
-    scheduledTimeouts.get(3_100)?.()
-    expect(popup.close).toHaveBeenCalledOnce()
+    expect(popup.close).not.toHaveBeenCalled()
   })
 
   it('reports a blocked popup when window.open throws', () => {
@@ -159,13 +157,13 @@ describe('Passport popup', () => {
       screenY: 0,
     })
 
-    expect(openPassportPopup(`${STAGING_PASSPORT_ORIGIN}/authorize#d=request`, vi.fn())).toBe(false)
+    expect(openPassportPopup(`${STAGING_PASSPORT_ORIGIN}/#d=request`, vi.fn())).toBe(false)
   })
 
   it('binds Passport messages to the exact custom origin that was opened', () => {
     const popup = popupWindow()
     stubPopupHost(popup)
-    openPassportPopup('https://custom.passport.example/authorize#d=request', vi.fn())
+    openPassportPopup('https://custom.passport.example/#d=request', vi.fn())
 
     expect(
       takePassportOutcome(
@@ -188,7 +186,7 @@ describe('Passport popup', () => {
   it('accepts only a same-origin callback correlated to the active attempt', () => {
     const popup = popupWindow()
     stubPopupHost(popup)
-    openPassportPopup(`${STAGING_PASSPORT_ORIGIN}/authorize#d=request`, vi.fn())
+    openPassportPopup(`${STAGING_PASSPORT_ORIGIN}/#d=request`, vi.fn())
 
     const callbackMessage = {
       data: {
@@ -209,7 +207,7 @@ describe('Passport popup', () => {
     const popup = popupWindow()
     const onClose = vi.fn()
     const host = stubPopupHost(popup)
-    openPassportPopup(`${STAGING_PASSPORT_ORIGIN}/authorize#d=request`, onClose)
+    openPassportPopup(`${STAGING_PASSPORT_ORIGIN}/#d=request`, onClose)
 
     popup.closed = true
     host.runCloseCheck()
